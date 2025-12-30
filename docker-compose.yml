@@ -1,0 +1,61 @@
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  mc:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY} &&
+      mc mb -p local/${S3_BUCKET} || true &&
+      mc ls local/${S3_BUCKET} &&
+      echo 'Bucket ensured: ${S3_BUCKET}' &&
+      sleep infinity
+      "
+
+  app:
+    build: ./app
+    environment:
+      LOG_PATH: /shared/logs/app.log
+    volumes:
+      - ./shared:/shared
+
+  shipper:
+    build: ./shipper
+    depends_on:
+      minio:
+        condition: service_healthy
+      mc:
+        condition: service_started
+    environment:
+      LOG_PATH: /shared/logs/app.log
+      SPOOL_DIR: /shared/spool
+      S3_BUCKET: ${S3_BUCKET}
+      S3_PREFIX: ${S3_PREFIX}
+      S3_REGION: ${S3_REGION}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    volumes:
+      - ./shared:/shared
+
+volumes:
+  minio_data:
+
